@@ -1,4 +1,5 @@
 
+
 package com.scc.ui;
 
 import java.util.Scanner;
@@ -17,9 +18,10 @@ public class MainMenu {
         System.out.println("================================");
         System.out.println("1. Register");
         System.out.println("2. Login");
-        System.out.println("3. Exit");
+        System.out.println("4. Exit");
         System.out.print("Choose an option: ");
 
         return scanner.nextLine().trim();
     }
 }
+
