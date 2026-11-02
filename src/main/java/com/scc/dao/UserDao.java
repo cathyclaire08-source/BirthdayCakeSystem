@@ -1,4 +1,5 @@
 
+
 package com.scc.dao;
 
 import com.scc.model.User;
@@ -208,6 +209,70 @@ public class UserDao {
             );
             return false;
         }
+    }
+
+    // NEW: Update a user's role and account status.
+    public boolean updateUserRoleAndStatus(
+            int userId,
+            String newRole,
+            String newStatus) {
+
+        String sql = """
+            UPDATE users
+            SET roles = ?, account_status = ?
+            WHERE id = ?
+            """;
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, newRole.trim().toUpperCase());
+            pstmt.setString(2, newStatus.trim().toUpperCase());
+            pstmt.setInt(3, userId);
+
+            return pstmt.executeUpdate() == 1;
+
+        } catch (SQLException e) {
+            System.err.println(
+                    "Unable to update user: " + e.getMessage()
+            );
+            return false;
+        }
+    }
+
+    // NEW: Retrieve the ID of an approved administrator.
+    public int getApprovedUserId(
+            String username,
+            String password) {
+
+        String sql = """
+            SELECT id
+            FROM users
+            WHERE username = ?
+              AND password = ?
+              AND roles = 'ADMIN'
+              AND account_status = 'APPROVED'
+            """;
+
+        try (Connection conn = DatabaseConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, username);
+            pstmt.setString(2, password);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("id");
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println(
+                    "Unable to retrieve admin ID: " + e.getMessage()
+            );
+        }
+
+        return -1;
     }
 }
 

@@ -128,7 +128,8 @@ public class Authentication {
 
         switch (role.trim().toUpperCase()) {
             case "ADMIN" ->
-                    new AdminMenu(userDao, scanner).start();
+                    new AdminMenu(userDao, scanner,
+                            userDao.getApprovedUserId(username, password)).start();
 
             case "CUSTOMER" ->
                     new CustomerMenu(scanner).start();
