@@ -1,5 +1,6 @@
 
 
+
 package com.scc.dao;
 
 import com.scc.model.User;
@@ -8,12 +9,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 
 public class UserDao {
 
-    // Register a new account with PENDING status.
+    // ==========================================
+    // 1. REGISTER USER
+    // ==========================================
     public boolean registerUser(
             String username,
             String fullName,
@@ -42,6 +46,7 @@ public class UserDao {
             System.out.println(
                     "Registration successful! Account is PENDING approval."
             );
+
             return true;
 
         } catch (SQLException e) {
@@ -50,7 +55,9 @@ public class UserDao {
         }
     }
 
-    // Login only when credentials are correct and account is APPROVED.
+    // ==========================================
+    // 2. LOGIN USER
+    // ==========================================
     public boolean loginUser(String username, String password) {
 
         String sql = """
@@ -77,9 +84,12 @@ public class UserDao {
         }
     }
 
-    // Get the role of an approved user.
+    // ==========================================
+    // 3. GET APPROVED USER ROLE
+    // ==========================================
     public String getApprovedUserRole(
-            String username, String password) {
+            String username,
+            String password) {
 
         String sql = """
             SELECT roles
@@ -96,6 +106,7 @@ public class UserDao {
             pstmt.setString(2, password);
 
             try (ResultSet rs = pstmt.executeQuery()) {
+
                 if (rs.next()) {
                     return rs.getString("roles");
                 }
@@ -110,7 +121,9 @@ public class UserDao {
         return null;
     }
 
-    // Retrieve all users.
+    // ==========================================
+    // 4. GET ALL USERS
+    // ==========================================
     public List<User> getAllUsers() {
 
         String sql = """
@@ -122,7 +135,9 @@ public class UserDao {
         return fetchUsers(sql);
     }
 
-    // Retrieve accounts awaiting approval.
+    // ==========================================
+    // 5. GET PENDING USERS
+    // ==========================================
     public List<User> getPendingUsers() {
 
         String sql = """
@@ -135,7 +150,9 @@ public class UserDao {
         return fetchUsers(sql);
     }
 
-    // Shared method for retrieving users.
+    // ==========================================
+    // 6. SHARED USER RETRIEVAL
+    // ==========================================
     private List<User> fetchUsers(String sql) {
 
         List<User> users = new ArrayList<>();
@@ -145,6 +162,7 @@ public class UserDao {
              ResultSet rs = pstmt.executeQuery()) {
 
             while (rs.next()) {
+
                 users.add(new User(
                         rs.getInt("id"),
                         rs.getString("full_name"),
@@ -163,31 +181,74 @@ public class UserDao {
         return users;
     }
 
-    // Approve a pending user account.
+    // ==========================================
+    // 7. APPROVE USER
+    // BACKWARD-COMPATIBLE METHOD
+    // ==========================================
     public boolean approveUser(int userId) {
+        return approveUser(userId, 0);
+    }
 
-        String sql = """
+    // ==========================================
+    // 8. APPROVE USER WITH ADMIN AUDIT LOG
+    // ==========================================
+    public boolean approveUser(int userId, int adminId) {
+
+        String updateSql = """
             UPDATE users
             SET account_status = 'APPROVED'
             WHERE id = ?
               AND account_status = 'PENDING'
             """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (Connection conn = DatabaseConnection.getConnection()) {
 
-            pstmt.setInt(1, userId);
-            return pstmt.executeUpdate() == 1;
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement pstmt =
+                         conn.prepareStatement(updateSql)) {
+
+                pstmt.setInt(1, userId);
+
+                int rowsUpdated = pstmt.executeUpdate();
+
+                if (rowsUpdated != 1) {
+                    conn.rollback();
+                    return false;
+                }
+
+                String description =
+                        "Admin " + adminId
+                                + " approved User " + userId;
+
+                insertActivityLog(
+                        conn,
+                        adminId,
+                        "USER_APPROVED",
+                        description
+                );
+
+                conn.commit();
+                return true;
+
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
 
         } catch (SQLException e) {
+
             System.err.println(
                     "Unable to approve user: " + e.getMessage()
             );
+
             return false;
         }
     }
 
-    // Reject a pending user account.
+    // ==========================================
+    // 9. REJECT USER
+    // ==========================================
     public boolean rejectUser(int userId) {
 
         String sql = """
@@ -204,43 +265,134 @@ public class UserDao {
             return pstmt.executeUpdate() == 1;
 
         } catch (SQLException e) {
+
             System.err.println(
                     "Unable to reject user: " + e.getMessage()
             );
+
             return false;
         }
     }
 
-    // NEW: Update a user's role and account status.
+    // ==========================================
+    // 10. UPDATE USER ROLE AND STATUS
+    // BACKWARD-COMPATIBLE METHOD
+    // ==========================================
     public boolean updateUserRoleAndStatus(
             int userId,
             String newRole,
             String newStatus) {
 
-        String sql = """
+        return updateUserRoleAndStatus(
+                userId,
+                newRole,
+                newStatus,
+                0
+        );
+    }
+
+    // ==========================================
+    // 11. UPDATE ROLE AND STATUS WITH AUDIT LOG
+    // ==========================================
+    public boolean updateUserRoleAndStatus(
+            int userId,
+            String newRole,
+            String newStatus,
+            int adminId) {
+
+        String updateSql = """
             UPDATE users
             SET roles = ?, account_status = ?
             WHERE id = ?
             """;
 
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        String selectSql = """
+            SELECT roles, account_status
+            FROM users
+            WHERE id = ?
+            """;
 
-            pstmt.setString(1, newRole.trim().toUpperCase());
-            pstmt.setString(2, newStatus.trim().toUpperCase());
-            pstmt.setInt(3, userId);
+        try (Connection conn = DatabaseConnection.getConnection()) {
 
-            return pstmt.executeUpdate() == 1;
+            conn.setAutoCommit(false);
+
+            try {
+
+                String oldRole;
+                String oldStatus;
+
+                try (PreparedStatement select =
+                             conn.prepareStatement(selectSql)) {
+
+                    select.setInt(1, userId);
+
+                    try (ResultSet rs = select.executeQuery()) {
+
+                        if (!rs.next()) {
+                            conn.rollback();
+                            return false;
+                        }
+
+                        oldRole = rs.getString("roles");
+                        oldStatus = rs.getString("account_status");
+                    }
+                }
+
+                try (PreparedStatement update =
+                             conn.prepareStatement(updateSql)) {
+
+                    update.setString(
+                            1,
+                            newRole.trim().toUpperCase()
+                    );
+
+                    update.setString(
+                            2,
+                            newStatus.trim().toUpperCase()
+                    );
+
+                    update.setInt(3, userId);
+
+                    if (update.executeUpdate() != 1) {
+                        conn.rollback();
+                        return false;
+                    }
+                }
+
+                String description =
+                        "Admin " + adminId
+                                + " updated User " + userId
+                                + " | Role: " + oldRole + " -> " + newRole
+                                + " | Status: " + oldStatus + " -> " + newStatus;
+
+                insertActivityLog(
+                        conn,
+                        adminId,
+                        "USER_UPDATED",
+                        description
+                );
+
+                conn.commit();
+                return true;
+
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
 
         } catch (SQLException e) {
+
             System.err.println(
                     "Unable to update user: " + e.getMessage()
             );
+
             return false;
         }
     }
 
-    // NEW: Retrieve the ID of an approved administrator.
+    // ==========================================
+    // 12. GET APPROVED USER ID
+    // ==========================================
     public int getApprovedUserId(
             String username,
             String password) {
@@ -250,7 +402,6 @@ public class UserDao {
             FROM users
             WHERE username = ?
               AND password = ?
-              AND roles = 'ADMIN'
               AND account_status = 'APPROVED'
             """;
 
@@ -261,20 +412,55 @@ public class UserDao {
             pstmt.setString(2, password);
 
             try (ResultSet rs = pstmt.executeQuery()) {
+
                 if (rs.next()) {
                     return rs.getInt("id");
                 }
             }
 
         } catch (SQLException e) {
+
             System.err.println(
-                    "Unable to retrieve admin ID: " + e.getMessage()
+                    "Unable to retrieve user ID: " + e.getMessage()
             );
         }
 
         return -1;
     }
+
+    // ==========================================
+    // 13. INSERT AUDIT LOG
+    // SQL REMAINS INSIDE DAO
+    // ==========================================
+    private void insertActivityLog(
+            Connection conn,
+            int adminId,
+            String actionType,
+            String description
+    ) throws SQLException {
+
+        String sql = """
+            INSERT INTO activity_logs
+            (user_id, action_type, description)
+            VALUES (?, ?, ?)
+            """;
+
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            if (adminId <= 0) {
+                pstmt.setNull(1, Types.INTEGER);
+            } else {
+                pstmt.setInt(1, adminId);
+            }
+
+            pstmt.setString(2, actionType);
+            pstmt.setString(3, description);
+
+            pstmt.executeUpdate();
+        }
+    }
 }
+
 
 
 
